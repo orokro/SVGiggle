@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <g id="base">
   <!-- Heart Shape: Global coords inside a translate -->
   <g transform="translate(5, 5)">
     <path d="M 5 25 A 20 20 0 0 1 45 25 A 20 20 0 0 1 85 25 Q 85 55 45 85 Q 5 55 5 25 Z" fill="red" stroke="black" stroke-width="3" />
@@ -6,5 +7,6 @@
   <!-- Highlight: Relative coords inside a scale -->
   <g transform="scale(2)">
     <path d="m 10 15 a 2.5 2.5 0 0 1 5 -5 a 2.5 2.5 0 0 1 5 5" fill="white" stroke="none" />
+  </g>
   </g>
 </svg>

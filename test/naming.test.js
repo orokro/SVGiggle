@@ -23,42 +23,48 @@ describe('SVGiggle Naming Normalization', () => {
         const svg = s.svg;
         expect(svg).toBeDefined();
 
-        // Helper to check normalized ID
+        // Check Base IDs (still present in DOM)
         const checkId = (originalId, expectedNormalizedId) => {
             const el = svg.querySelector(`[id="${originalId}"]`);
             expect(el).not.toBeNull();
             expect(el.getAttribute('data-normalized-id')).toBe(expectedNormalizedId);
         };
 
-        // Test cases from the file
         checkId('Face-Shape', 'face-shape');
-        checkId('Mouth_copy_3', 'mouth');
+        checkId('Mouth', 'mouth');
         checkId('Eye_1_', 'eye');
         checkId('Eye-Clppng_8_', 'eye-clppng');
-        checkId('Whiskers-L_copy_3', 'whiskers-l');
-        checkId('Nose_3_', 'nose');
-        checkId('Pupil_7_', 'pupil');
+
+        // Verify Shape Keys extracted
+        expect(s.shapeKeys['left-eye-closed']).toBeDefined();
+        // Inside left-eye-closed: Mouth_copy_3 -> mouth.
+        // Inside Mouth_copy_3: Bottom_11_ -> bottom.
+        // Base Mouth: Bottom -> bottom.
+        // So delta for 'bottom' should be in left-eye-closed.
+        expect(s.shapeKeys['left-eye-closed']['bottom']).toBeDefined();
+        
+        // Also check right-eye-closed
+        expect(s.shapeKeys['right-eye-closed']).toBeDefined();
+        
+        // Also check mouth-closed
+        expect(s.shapeKeys['mouth-closed']).toBeDefined();
     });
 
     it('should cleanId correctly (unit test)', () => {
-        // We can access prototype or instantiate dummy with an element
-        const s = new SVGiggle(document.createElement('svg')); 
-        // We can access cleanId method?
-        // It's on the class prototype/instance.
+        // Create valid dummy structure
+        const dummySvg = document.createElement('svg');
+        const base = document.createElement('g');
+        base.setAttribute('id', 'base');
+        base.setAttribute('data-normalized-id', 'base'); // Needs this for extractBlendShapes logic
+        dummySvg.appendChild(base);
+        
+        const s = new SVGiggle(dummySvg); 
         
         expect(s.cleanId('Test')).toBe('test');
         expect(s.cleanId('Test_1_')).toBe('test');
         expect(s.cleanId('Layer_copy')).toBe('layer');
         expect(s.cleanId('Layer_copy_2')).toBe('layer');
         expect(s.cleanId('Object_x002D_Name')).toBe('object-name');
-        expect(s.cleanId('Complex_Name_1__copy_5')).toBe('complex_name'); // _1_ is not at end after copy removed?
-        // Logic: remove copy suffix FIRST.
-        // `clean = clean.replace(/_copy(_\d+)?$/i, '');` -> removes `_copy_5`.
-        // Result: `Complex_Name_1_`.
-        // Then `clean = clean.replace(/_\d+_$/, '');` -> removes `_1_`.
-        // Result: `Complex_Name`.
-        // Lowercase: `complex_name`.
-        
         expect(s.cleanId('Complex_Name_1__copy_5')).toBe('complex_name');
     });
 });

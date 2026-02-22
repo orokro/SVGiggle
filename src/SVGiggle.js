@@ -14,7 +14,14 @@ export class SVGiggle {
         }
         
         this._svg = null;
+        this._computedSvg = null;
         this.unsupportedElements = [];
+        
+        this.baseState = {}; // Map<id, pathCommands[]>
+        this.shapeKeys = {}; // Map<shapeKeyName, Map<id, deltaCommands[]>>
+        this.currentBlends = {}; // Map<shapeKeyName, weight>
+        this.listeners = { change: [] };
+        
         this.ready = this.init();
     }
 
@@ -37,35 +44,29 @@ export class SVGiggle {
             }
             
             this.normalize(this._svg);
+            this.extractBlendShapes();
             return this;
         }
 
         let content;
-        // Check environment - prioritize Node check even if window exists (e.g. jsdom)
         const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
 
         if (isNode) {
-            // Node.js environment
             try {
                 const fs = await import('node:fs');
-                // Resolve path relative to CWD if simpler
                 content = fs.readFileSync(this.filePath, 'utf-8');
             } catch (e) {
                 console.error('Failed to load file in Node environment:', e);
                 throw e;
             }
         } else {
-            // Browser environment
             try {
                 const res = await fetch(this.filePath);
-                // status 0 can occur with file:// protocol in some environments where it's allowed but doesn't return 200
                 if (!res.ok && res.status !== 0) throw new Error(`Failed to fetch ${this.filePath} (Status: ${res.status})`);
                 content = await res.text();
-                // Verify content is not empty
                 if (!content) throw new Error('Fetched content is empty');
             } catch (e) {
-                // Fallback to <object> tag hack for file:// protocol or CORS issues
-                console.warn('Fetch failed, attempting <object> tag fallback for local file access...', e);
+                console.warn('Fetch failed, attempting <object> tag fallback...', e);
                 try {
                     content = await new Promise((resolve, reject) => {
                         const obj = document.createElement('object');
@@ -76,62 +77,43 @@ export class SVGiggle {
                         obj.onload = () => {
                             try {
                                 const doc = obj.contentDocument;
-                                if (!doc) {
-                                    reject(new Error('No contentDocument accessible (CORS blocking local file?)'));
-                                    return;
-                                }
+                                if (!doc) { reject(new Error('No contentDocument accessible')); return; }
                                 const svg = doc.documentElement;
-                                if (!svg || svg.tagName.toLowerCase() !== 'svg') {
-                                    reject(new Error('Loaded content is not an SVG'));
-                                    return;
-                                }
+                                if (!svg || svg.tagName.toLowerCase() !== 'svg') { reject(new Error('Not an SVG')); return; }
                                 resolve(svg.outerHTML);
-                            } catch (err) {
-                                reject(err);
-                            } finally {
-                                if (obj.parentNode) document.body.removeChild(obj);
-                            }
+                            } catch (err) { reject(err); } finally { if (obj.parentNode) document.body.removeChild(obj); }
                         };
-                        obj.onerror = () => {
-                            if (obj.parentNode) document.body.removeChild(obj);
-                            reject(new Error(`Failed to load ${this.filePath} via <object>`));
-                        };
+                        obj.onerror = () => { if (obj.parentNode) document.body.removeChild(obj); reject(new Error('Failed via <object>')); };
                         document.body.appendChild(obj);
                     });
                 } catch (fallbackError) {
-                    console.error('All loading methods failed.');
-                    throw new Error(`Could not load SVG via fetch or object tag. If using file://, browsers block this. Error: ${fallbackError.message}`);
+                    throw new Error(`Could not load SVG. Error: ${fallbackError.message}`);
                 }
             }
         }
 
-        // Parse SVG
         const parser = new DOMParser();
         const doc = parser.parseFromString(content, 'image/svg+xml');
-        // Check for parsing errors
         const parserError = doc.querySelector('parsererror');
-        if (parserError) {
-            throw new Error('XML Parsing Error: ' + parserError.textContent);
-        }
+        if (parserError) throw new Error('XML Parsing Error: ' + parserError.textContent);
 
         this._svg = doc.documentElement;
         this.normalize(this._svg);
+        this.extractBlendShapes();
         return this;
     }
 
+    // Returns the computed SVG
     get svg() {
-        return this._svg;
+        if (!this._computedSvg) {
+            this.compute();
+        }
+        return this._computedSvg;
     }
 
     normalize(svg) {
-        // We need to traverse the DOM and flatten transforms
-        // We'll use a recursive function that passes down the accumulated matrix
-        
-        // Ensure DOMMatrix is available
         const Matrix = (typeof DOMMatrix !== 'undefined') ? DOMMatrix : (typeof WebKitCSSMatrix !== 'undefined' ? WebKitCSSMatrix : null);
-        if (!Matrix) {
-            throw new Error('DOMMatrix is not supported in this environment.');
-        }
+        if (!Matrix) throw new Error('DOMMatrix is not supported in this environment.');
 
         const allowedTags = ['g', 'svg', 'defs', 'symbol', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'clippath', 'use'];
 
@@ -143,7 +125,6 @@ export class SVGiggle {
                 return;
             }
 
-            // Normalize ID
             const id = element.getAttribute('id');
             if (id) {
                 const clean = this.cleanId(id);
@@ -151,64 +132,27 @@ export class SVGiggle {
             }
 
             let currentMatrix = parentMatrix;
-
-            // 1. Get element transform
             const transformAttr = element.getAttribute('transform');
             if (transformAttr) {
-                // Parse transform attribute into matrix manually to support environments without CSS parsing
                 const commands = transformAttr.matchAll(/(\w+)\s*\(([^)]*)\)/g);
                 for (const match of commands) {
                     const type = match[1];
                     const args = match[2].trim().split(/[\s,]+/).map(parseFloat);
-                    
                     try {
                         switch (type) {
-                            case 'translate':
-                                currentMatrix = currentMatrix.translate(args[0], args[1] || 0);
-                                break;
-                            case 'scale':
-                                currentMatrix = currentMatrix.scale(args[0], args[1] === undefined ? args[0] : args[1]);
-                                break;
-                            case 'rotate':
-                                if (args.length === 1) {
-                                    currentMatrix = currentMatrix.rotate(args[0]);
-                                } else if (args.length === 3) {
-                                    // rotate(a, cx, cy) -> translate(cx, cy) rotate(a) translate(-cx, -cy)
-                                    currentMatrix = currentMatrix.translate(args[1], args[2])
-                                                                 .rotate(args[0])
-                                                                 .translate(-args[1], -args[2]);
-                                }
-                                break;
-                            case 'skewX':
-                                currentMatrix = currentMatrix.skewX(args[0]);
-                                break;
-                            case 'skewY':
-                                currentMatrix = currentMatrix.skewY(args[0]);
-                                break;
-                            case 'matrix':
-                                if (args.length === 6) {
-                                    const m = new Matrix();
-                                    m.a = args[0]; m.b = args[1];
-                                    m.c = args[2]; m.d = args[3];
-                                    m.e = args[4]; m.f = args[5];
-                                    currentMatrix = currentMatrix.multiply(m);
-                                }
-                                break;
-                            default:
-                                console.warn(`Unsupported transform function: ${type}`);
+                            case 'translate': currentMatrix = currentMatrix.translate(args[0], args[1] || 0); break;
+                            case 'scale': currentMatrix = currentMatrix.scale(args[0], args[1] === undefined ? args[0] : args[1]); break;
+                            case 'rotate': args.length === 1 ? currentMatrix = currentMatrix.rotate(args[0]) : currentMatrix = currentMatrix.translate(args[1], args[2]).rotate(args[0]).translate(-args[1], -args[2]); break;
+                            case 'skewX': currentMatrix = currentMatrix.skewX(args[0]); break;
+                            case 'skewY': currentMatrix = currentMatrix.skewY(args[0]); break;
+                            case 'matrix': if (args.length === 6) { const m = new Matrix(); m.a=args[0]; m.b=args[1]; m.c=args[2]; m.d=args[3]; m.e=args[4]; m.f=args[5]; currentMatrix = currentMatrix.multiply(m); } break;
                         }
-                    } catch (e) {
-                         console.warn(`Failed to apply transform "${match[0]}"`, e);
-                    }
+                    } catch (e) { console.warn(`Failed transform "${match[0]}"`, e); }
                 }
-                
-                // Remove the transform attribute since we're baking it in
                 element.removeAttribute('transform');
             }
 
-            // 2. Handle element types
-            if (tagName === 'g' || tagName === 'svg' || tagName === 'defs' || tagName === 'symbol' || tagName === 'clipPath' || tagName === 'use') {
-                // For containers, just recurse
+            if (tagName === 'g' || tagName === 'svg' || tagName === 'defs' || tagName === 'symbol' || tagName === 'clippath' || tagName === 'use') {
                 if ((tagName === 'svg' || tagName === 'use') && element !== this._svg) {
                     const x = parseFloat(element.getAttribute('x') || 0);
                     const y = parseFloat(element.getAttribute('y') || 0);
@@ -218,67 +162,176 @@ export class SVGiggle {
                          element.removeAttribute('y');
                     }
                 }
-
-                // Copy children to array to avoid live collection issues if we modify DOM structure
-                const children = Array.from(element.children);
-                for (const child of children) {
-                    traverse(child, currentMatrix);
-                }
+                Array.from(element.children).forEach(child => traverse(child, currentMatrix));
             } else if (tagName === 'path') {
-                // Normalize path data
                 const d = element.getAttribute('d');
                 if (d) {
                     const m = currentMatrix;
-                    const matrixArray = [m.a, m.b, m.c, m.d, m.e, m.f];
-
-                    // Convert to absolute and transform using svgpath
-                    let newD = svgpath(d)
-                        .abs()
-                        .matrix(matrixArray)
-                        .toString();
-                    
-                    // Convert to Cubic Bezier
+                    let newD = svgpath(d).abs().matrix([m.a, m.b, m.c, m.d, m.e, m.f]).toString();
                     newD = this.toCubic(newD);
-                    
                     element.setAttribute('d', newD);
                 }
             } else if (['rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon'].includes(tagName)) {
-                // Convert shape to path then transform
                 const pathData = this.shapeToPath(element);
                 if (pathData) {
                     const m = currentMatrix;
-                    const matrixArray = [m.a, m.b, m.c, m.d, m.e, m.f];
-                    
-                    let newD = svgpath(pathData)
-                        .abs()
-                        .matrix(matrixArray)
-                        .toString();
-                    
-                    // Convert to Cubic Bezier
+                    let newD = svgpath(pathData).abs().matrix([m.a, m.b, m.c, m.d, m.e, m.f]).toString();
                     newD = this.toCubic(newD);
-                    
-                    // Replace element with <path>
                     const newPath = this._svg.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
                     newPath.setAttribute('d', newD);
-                    
-                    // Copy attributes (fill, stroke, class, id, etc.)
                     for (const attr of element.attributes) {
                         if (!['x', 'y', 'width', 'height', 'cx', 'cy', 'r', 'rx', 'ry', 'x1', 'y1', 'x2', 'y2', 'points', 'd', 'transform'].includes(attr.name)) {
                             newPath.setAttribute(attr.name, attr.value);
                         }
                     }
-                    
                     element.parentNode.replaceChild(newPath, element);
                 }
             }
         };
 
-        // Start traversal with identity matrix
         traverse(svg, new Matrix());
+        if (this.unsupportedElements.length > 0) console.warn('Dropped unsupported:', [...new Set(this.unsupportedElements)]);
+    }
+
+    extractBlendShapes() {
+        // Find base group
+        const base = this._svg.querySelector('[data-normalized-id="base"]');
+        if (!base) throw new Error('Base layer not found (id="base").');
+
+        // Parse Base State
+        const basePaths = base.querySelectorAll('path');
+        basePaths.forEach(p => {
+            const id = p.getAttribute('data-normalized-id');
+            if (id) {
+                this.baseState[id] = this.parsePathData(p.getAttribute('d'));
+            }
+        });
+
+        // Find Shape Keys (sibling groups of base)
+        // We look at direct children of SVG that are groups and not base
+        const shapeGroups = Array.from(this._svg.children).filter(el => 
+            el.tagName.toLowerCase() === 'g' && 
+            el.getAttribute('data-normalized-id') !== 'base'
+        );
+
+        if (shapeGroups.length === 0) console.warn('No blend shape layers found.');
+
+        shapeGroups.forEach(group => {
+            const keyName = group.getAttribute('data-normalized-id');
+            if (!keyName) return;
+
+            this.shapeKeys[keyName] = {};
+            
+            const paths = group.querySelectorAll('path');
+            paths.forEach(p => {
+                const id = p.getAttribute('data-normalized-id');
+                if (id && this.baseState[id]) {
+                    const shapePath = this.parsePathData(p.getAttribute('d'));
+                    const basePath = this.baseState[id];
+                    
+                    // Compute Delta
+                    // Check compatibility
+                    if (shapePath.length !== basePath.length) {
+                        console.warn(`Path length mismatch for ${id} in ${keyName}. Skipping.`);
+                        return;
+                    }
+
+                    const deltaPath = shapePath.map((cmd, i) => {
+                        const baseCmd = basePath[i];
+                        if (cmd[0] !== baseCmd[0]) {
+                            console.warn(`Command mismatch at ${i} for ${id}.`);
+                            return baseCmd.map((v, k) => k===0?v:0); // Zero delta fallback
+                        }
+                        // [Cmd, arg1, arg2...]
+                        // Delta = Shape - Base
+                        const delta = [cmd[0]];
+                        for (let k=1; k<cmd.length; k++) {
+                            delta.push(cmd[k] - baseCmd[k]);
+                        }
+                        return delta;
+                    });
+                    
+                    this.shapeKeys[keyName][id] = deltaPath;
+                }
+            });
+
+            // Remove shape key group from DOM
+            group.parentNode.removeChild(group);
+        });
         
-        if (this.unsupportedElements.length > 0) {
-            console.warn('Dropped unsupported SVG elements:', [...new Set(this.unsupportedElements)]);
+        // Initialize computedSVG as a clone of what remains (contains base)
+        this._computedSvg = this._svg.cloneNode(true);
+    }
+
+    blend(nameOrObj, val) {
+        if (typeof nameOrObj === 'object') {
+            for (const [name, value] of Object.entries(nameOrObj)) {
+                this.currentBlends[name] = value;
+            }
+        } else {
+            this.currentBlends[nameOrObj] = val;
         }
+        
+        this.compute();
+        
+        // Emit change
+        this.listeners['change'].forEach(cb => cb(this._computedSvg));
+    }
+
+    compute() {
+        // Start with base state
+        // Iterate over base paths in _computedSvg
+        // Apply deltas
+        
+        const paths = this._computedSvg.querySelectorAll('path');
+        paths.forEach(p => {
+            const id = p.getAttribute('data-normalized-id');
+            if (!id || !this.baseState[id]) return;
+
+            const baseCommands = this.baseState[id];
+            
+            // Reconstruct path
+            let finalD = '';
+            
+            baseCommands.forEach((cmd, cmdIdx) => {
+                const type = cmd[0];
+                const args = [...cmd.slice(1)]; // copy base args
+                
+                // Apply deltas
+                for (const [key, weight] of Object.entries(this.currentBlends)) {
+                    if (weight === 0) continue;
+                    const deltaMap = this.shapeKeys[key];
+                    if (deltaMap && deltaMap[id]) {
+                        const deltaCmd = deltaMap[id][cmdIdx];
+                        if (deltaCmd) {
+                            for (let k=0; k<args.length; k++) {
+                                args[k] += deltaCmd[k+1] * weight;
+                            }
+                        }
+                    }
+                }
+                
+                finalD += `${type} ${args.join(' ')} `;
+            });
+            
+            p.setAttribute('d', finalD.trim());
+        });
+    }
+
+    on(event, callback) {
+        if (this.listeners[event]) this.listeners[event].push(callback);
+    }
+
+    off(event, callback) {
+        if (this.listeners[event]) this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
+    }
+
+    parsePathData(d) {
+        const commands = [];
+        svgpath(d).iterate((segment, index, x, y) => {
+            commands.push(segment.slice()); 
+        });
+        return commands;
     }
 
     toCubic(d) {
@@ -296,54 +349,37 @@ export class SVGiggle {
                 x = curX; y = curY; 
                 
                 if (cmd === 'M') {
-                    startX = args[0];
-                    startY = args[1];
+                    startX = args[0]; startY = args[1];
                     newPath += `M ${args[0]} ${args[1]} `;
                     return;
                 }
-
                 if (cmd === 'L') {
-                    // L x1 y1 -> C x y x1 y1 x1 y1
                     const x1 = args[0], y1 = args[1];
                     newPath += `C ${x} ${y} ${x1} ${y1} ${x1} ${y1} `;
                     return;
                 }
-                
                 if (cmd === 'H') {
-                    // H x1 -> L x1 y -> C ...
                     const x1 = args[0];
                     newPath += `C ${x} ${y} ${x1} ${y} ${x1} ${y} `;
                     return;
                 }
-                
                 if (cmd === 'V') {
-                    // V y1 -> L x y1 -> C ...
                     const y1 = args[0];
                     newPath += `C ${x} ${y} ${x} ${y1} ${x} ${y1} `;
                     return;
                 }
-                
                 if (cmd === 'C') {
                     newPath += `C ${args.join(' ')} `;
                     return;
                 }
-                
                 if (cmd === 'Q') {
-                    // Q x1 y1 x2 y2 -> C
-                    const qx = args[0], qy = args[1];
-                    const endX = args[2], endY = args[3];
-                    
-                    const cp1x = x + (2/3) * (qx - x);
-                    const cp1y = y + (2/3) * (qy - y);
-                    const cp2x = endX + (2/3) * (qx - endX);
-                    const cp2y = endY + (2/3) * (qy - endY);
-                    
+                    const qx = args[0], qy = args[1], endX = args[2], endY = args[3];
+                    const cp1x = x + (2/3) * (qx - x), cp1y = y + (2/3) * (qy - y);
+                    const cp2x = endX + (2/3) * (qx - endX), cp2y = endY + (2/3) * (qy - endY);
                     newPath += `C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${endX} ${endY} `;
                     return;
                 }
-                
                 if (cmd === 'Z') {
-                    // Close with curve to start, then Z
                     newPath += `C ${x} ${y} ${startX} ${startY} ${startX} ${startY} Z `;
                     return;
                 }
@@ -358,13 +394,6 @@ export class SVGiggle {
         
         if (tag === 'rect') {
             const x = get('x'), y = get('y'), w = get('width'), h = get('height');
-            const rx = get('rx'), ry = get('ry');
-            // Simplified rect (no rounding for now, or handle rounding?)
-            // If rx/ry present, it's complex. 
-            // I'll implement basic rect.
-            // Support for rounded rects if needed? Prompt implies "all SVG elements".
-            // I'll stick to simple rect for "light-weight" unless requested.
-            // SVGPathCommander might have shape conversion utils? No.
             return `M ${x} ${y} h ${w} v ${h} h ${-w} z`;
         }
         if (tag === 'circle') {
@@ -382,8 +411,6 @@ export class SVGiggle {
         if (tag === 'polyline' || tag === 'polygon') {
             const points = element.getAttribute('points');
             if (!points) return '';
-            // "10,10 20,20" -> "M 10 10 L 20 20"
-            // Split by comma or space
             const coords = points.trim().split(/[\s,]+/);
             if (coords.length < 2) return '';
             let d = `M ${coords[0]} ${coords[1]}`;
@@ -399,18 +426,10 @@ export class SVGiggle {
     cleanId(id) {
         if (!id) return null;
         let clean = id;
-        // Decode Illustrator hex encoding: _x002D_ -> -
         clean = clean.replace(/_x([0-9A-Fa-f]{4})_/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
-        
-        // Remove _copy_X or _copy suffix (case insensitive)
         clean = clean.replace(/_copy(_\d+)?$/i, '');
-        
-        // Remove Illustrator duplication suffix _1_ (or similar numbers) at end
         clean = clean.replace(/_\d+_$/, '');
-        
-        // Kebab case (lowercase)
         clean = clean.toLowerCase();
-        
         return clean;
     }
 

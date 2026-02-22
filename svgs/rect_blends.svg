@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <g id="base">
+    <rect id="rect" x="10" y="10" width="20" height="20" fill="red" />
+  </g>
+  <g id="move-up">
+    <rect id="rect" x="10" y="0" width="20" height="20" fill="red" />
+  </g>
+  <g id="move-right">
+    <rect id="rect" x="20" y="10" width="20" height="20" fill="red" />
+  </g>
+</svg>
