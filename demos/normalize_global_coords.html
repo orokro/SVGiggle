@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVGiggle - Normalize Global Coordinates Demo</title>
+    <style>
+        body { font-family: system-ui, sans-serif; padding: 20px; }
+        h1 { margin-bottom: 20px; }
+        table { border-collapse: collapse; width: 100%; max-width: 900px; margin: 0 auto; }
+        th, td { border: 1px solid #ccc; padding: 10px; text-align: center; vertical-align: middle; }
+        th { background: #f0f0f0; }
+        svg { border: 2px solid black; width: 100px; height: 100px; display: block; margin: 0 auto; }
+        .code-snippet { 
+            font-family: monospace; 
+            font-size: 11px; 
+            text-align: left; 
+            max-width: 250px; 
+            max-height: 100px; 
+            overflow: auto; 
+            background: #f9f9f9; 
+            padding: 5px; 
+            border: 1px solid #eee; 
+            white-space: pre-wrap;
+        }
+        /* Hidden templates */
+        .svg-template { display: none; }
+    </style>
+    <!-- Load the library -->
+    <script src="../dist/svgiggle.iife.js"></script>
+</head>
+<body>
+    <h1>SVGiggle Demo: Global Normalization</h1>
+    <p>Visual inspection of normalization. No server required (SVGs loaded from DOM).</p>
+    
+    <table id="demo-table">
+        <thead>
+            <tr>
+                <th>File Name</th>
+                <th>Before (Original DOM)</th>
+                <th>After (Normalized DOM)</th>
+                <th>Path Data (Snippet)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Rows injected by script -->
+        </tbody>
+    </table>
+
+    <!-- Inline SVG Templates -->
+    <div id="templates">
+        <!-- heart_global.svg -->
+        <template id="tpl-heart_global">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+                <path d="M 10 30 A 20 20 0 0 1 50 30 A 20 20 0 0 1 90 30 Q 90 60 50 90 Q 10 60 10 30 Z" fill="red" stroke="black" stroke-width="3" />
+                <path d="M 20 30 A 5 5 0 0 1 30 20 A 5 5 0 0 1 40 30" fill="white" stroke="none" />
+            </svg>
+        </template>
+
+        <!-- heart_local.svg -->
+        <template id="tpl-heart_local">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+                <g transform="translate(10, 10)">
+                    <path d="m 0 20 a 20 20 0 0 1 40 0 a 20 20 0 0 1 40 0 q 0 30 -40 60 q -40 -30 -40 -60 z" fill="red" stroke="black" stroke-width="3" />
+                    <path d="m 10 20 a 5 5 0 0 1 10 -10 a 5 5 0 0 1 10 10" fill="white" stroke="none" />
+                </g>
+            </svg>
+        </template>
+
+        <!-- heart_mixed.svg -->
+        <template id="tpl-heart_mixed">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+                <g transform="translate(5, 5)">
+                    <path d="M 5 25 A 20 20 0 0 1 45 25 A 20 20 0 0 1 85 25 Q 85 55 45 85 Q 5 55 5 25 Z" fill="red" stroke="black" stroke-width="3" />
+                </g>
+                <g transform="scale(2)">
+                    <path d="m 10 15 a 2.5 2.5 0 0 1 5 -5 a 2.5 2.5 0 0 1 5 5" fill="white" stroke="none" />
+                </g>
+            </svg>
+        </template>
+
+        <!-- shapes_mixed.svg -->
+        <template id="tpl-shapes_mixed">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+                <!-- Group with translation and rotation -->
+                <g transform="translate(20, 20) rotate(45)">
+                    <!-- Rect (will become path) -->
+                    <rect x="10" y="10" width="30" height="20" fill="blue" stroke="black" />
+                    <!-- Circle (will become path) -->
+                    <circle cx="60" cy="20" r="15" fill="green" stroke="none" />
+                </g>
+
+                <!-- Group with scale -->
+                <g transform="scale(1.5)">
+                    <!-- Ellipse -->
+                    <ellipse cx="80" cy="80" rx="20" ry="10" fill="yellow" stroke="black" />
+                    <!-- Line -->
+                    <line x1="10" y1="100" x2="50" y2="100" stroke="purple" stroke-width="2" />
+                </g>
+
+                <!-- Nested groups with skew -->
+                <g transform="translate(100, 100)">
+                    <g transform="skewX(20)">
+                        <!-- Polyline -->
+                        <polyline points="0,0 20,20 40,0" fill="none" stroke="orange" stroke-width="2" />
+                        <!-- Polygon -->
+                        <polygon points="50,50 70,70 90,50" fill="cyan" stroke="black" />
+                    </g>
+                </g>
+            </svg>
+        </template>
+    </div>
+
+    <script>
+        const fileMap = {
+            'heart_global.svg': 'tpl-heart_global',
+            'heart_local.svg':  'tpl-heart_local',
+            'heart_mixed.svg':  'tpl-heart_mixed',
+            'shapes_mixed.svg': 'tpl-shapes_mixed'
+        };
+
+        const tbody = document.querySelector('#demo-table tbody');
+        const Lib = SVGiggle.SVGiggle || SVGiggle;
+
+        async function run() {
+            for (const [fileName, tplId] of Object.entries(fileMap)) {
+                const tr = document.createElement('tr');
+                
+                // Name
+                const tdName = document.createElement('td');
+                tdName.textContent = fileName;
+                tr.appendChild(tdName);
+
+                // Get Template Content
+                const tpl = document.getElementById(tplId);
+                const originalSvg = tpl.content.querySelector('svg').cloneNode(true);
+                
+                // Before Column
+                const tdBefore = document.createElement('td');
+                // We append a clone to show the "Before" state
+                const beforeClone = originalSvg.cloneNode(true);
+                tdBefore.appendChild(beforeClone);
+                tr.appendChild(tdBefore);
+
+                // After Column
+                const tdAfter = document.createElement('td');
+                const tdCode = document.createElement('td');
+                tdCode.className = 'code-snippet';
+                
+                try {
+                    // Instantiate SVGiggle with the DOM Element (originalSvg)
+                    // The library should clone it internally or we pass a clone.
+                    // The prompt says "without changing the same or rendering of the element" referring to s.svg getter vs original?
+                    // Actually, "The s.svg that returns should only use global coordinates, without changing the same or rendering of the element."
+                    // This implies the visual output should remain the same.
+                    
+                    const s = new Lib(originalSvg); 
+                    await s.ready;
+                    const normalizedSvg = s.svg;
+                    
+                    // Add normalized SVG to the "After" column
+                    tdAfter.appendChild(normalizedSvg);
+                    
+                    // Show path data snippet
+                    const paths = normalizedSvg.querySelectorAll('path');
+                    let code = '';
+                    paths.forEach((p, i) => {
+                        let d = p.getAttribute('d');
+                        if (d.length > 50) d = d.substring(0, 50) + '...';
+                        code += `Path ${i+1}: ${d}\n`;
+                    });
+                    tdCode.textContent = code;
+
+                } catch (e) {
+                    console.error(e);
+                    tdAfter.textContent = 'Error: ' + e.message;
+                }
+
+                tr.appendChild(tdAfter);
+                tr.appendChild(tdCode);
+                tbody.appendChild(tr);
+            }
+        }
+
+        run();
+    </script>
+</body>
+</html>
