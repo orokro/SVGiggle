@@ -414,7 +414,7 @@ export class SVGiggle {
         return clean;
     }
 
-    tree(clean = false, showOriginal = false) {
+    tree(clean = false, showOriginal = false, maxDepth = Infinity) {
         if (!this._svg) return '';
         
         const buildTree = (el, depth = 0) => {
@@ -426,17 +426,7 @@ export class SVGiggle {
             let name = '';
             if (clean && cleanId) {
                 name = cleanId;
-                if (showOriginal && id) { // Show original regardless of difference? Prompt: "old name in parens"
-                     // Prompt example: "- Pupil (Pupil_1_ Copy 2)"
-                     // If they are same, maybe redundant? "pupil (pupil)"?
-                     // I'll show it if different, or always if requested?
-                     // Prompt implies showing the *transformation*.
-                     // I'll stick to showing it if different or just always if user requested debugging.
-                     // But usually "Pupil (Pupil)" is noise.
-                     // I'll show only if different OR if showOriginal is explicitly true maybe?
-                     // Let's check diff.
-                     // Wait, cleanId is "pupil", id is "Pupil". They differ.
-                     // cleanId is "pupil", id is "pupil". No diff.
+                if (showOriginal && id) { 
                      if (id !== cleanId) name += ` (${id})`;
                 }
             } else if (id) {
@@ -448,8 +438,10 @@ export class SVGiggle {
             
             let output = line + '\n';
             
-            for (const child of el.children) {
-                output += buildTree(child, depth + 1);
+            if (depth < maxDepth) {
+                for (const child of el.children) {
+                    output += buildTree(child, depth + 1);
+                }
             }
             return output;
         };

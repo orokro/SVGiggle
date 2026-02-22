@@ -20,14 +20,26 @@ const SVGiggle = lib.SVGiggle;
 
 // Parse args
 const args = process.argv.slice(2);
-if (args.length < 1) {
-    console.log('Usage: node svgtree.js <filename> [clean] [showOriginal]');
+let maxDepth = Infinity;
+
+// Filter flags and parse options
+const positionals = args.filter(arg => {
+    if (arg.startsWith('-d=')) {
+        const val = parseInt(arg.split('=')[1], 10);
+        if (!isNaN(val)) maxDepth = val;
+        return false;
+    }
+    return true;
+});
+
+if (positionals.length < 1) {
+    console.log('Usage: node svgtree.js <filename> [clean] [showOriginal] [-d=N]');
     process.exit(1);
 }
 
-const filename = args[0];
-const clean = args[1] === 'true';
-const showOriginal = args[2] === 'true';
+const filename = positionals[0];
+const clean = positionals[1] === 'true';
+const showOriginal = positionals[2] === 'true';
 
 const possiblePaths = [
     filename,
@@ -49,7 +61,7 @@ if (!filePath) {
     try {
         const s = new SVGiggle(filePath);
         await s.ready;
-        console.log(s.tree(clean, showOriginal));
+        console.log(s.tree(clean, showOriginal, maxDepth));
     } catch (e) {
         console.error('Error:', e);
     }
