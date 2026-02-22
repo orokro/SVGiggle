@@ -1,13 +1,44 @@
 import svgpath from 'svgpath';
 
 export class SVGiggle {
-    constructor(filePath) {
-        this.filePath = filePath;
+    constructor(input) {
+        this.filePath = null;
+        this.inputElement = null;
+
+        if (typeof input === 'string') {
+            this.filePath = input;
+        } else if (typeof input === 'object' && input !== null && (input.nodeType === 1 || typeof input.tagName === 'string')) {
+            this.inputElement = input;
+        } else {
+             throw new Error('Invalid input: Must be a file path string or a DOM Element.');
+        }
+        
         this._svg = null;
         this.ready = this.init();
     }
 
     async init() {
+        // Handle direct DOM element input
+        if (this.inputElement) {
+            const tag = this.inputElement.tagName.toLowerCase();
+            if (tag === 'svg') {
+                this._svg = this.inputElement.cloneNode(true);
+            } else if (tag === 'object' || tag === 'iframe') {
+                try {
+                    const doc = this.inputElement.contentDocument;
+                    if (!doc) throw new Error('No contentDocument accessible');
+                    this._svg = doc.documentElement.cloneNode(true);
+                } catch (e) {
+                     throw new Error(`Failed to extract SVG from <${tag}>: ` + e.message);
+                }
+            } else {
+                 throw new Error('Unsupported element type. Expected <svg>, <object>, or <iframe>.');
+            }
+            
+            this.normalize(this._svg);
+            return this;
+        }
+
         let content;
         // Check environment - prioritize Node check even if window exists (e.g. jsdom)
         const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
@@ -26,11 +57,50 @@ export class SVGiggle {
             // Browser environment
             try {
                 const res = await fetch(this.filePath);
-                if (!res.ok) throw new Error(`Failed to fetch ${this.filePath}`);
+                // status 0 can occur with file:// protocol in some environments where it's allowed but doesn't return 200
+                if (!res.ok && res.status !== 0) throw new Error(`Failed to fetch ${this.filePath} (Status: ${res.status})`);
                 content = await res.text();
+                // Verify content is not empty
+                if (!content) throw new Error('Fetched content is empty');
             } catch (e) {
-                console.error('Failed to load file in Browser environment:', e);
-                throw e;
+                // Fallback to <object> tag hack for file:// protocol or CORS issues
+                console.warn('Fetch failed, attempting <object> tag fallback for local file access...', e);
+                try {
+                    content = await new Promise((resolve, reject) => {
+                        const obj = document.createElement('object');
+                        obj.data = this.filePath;
+                        obj.type = 'image/svg+xml';
+                        obj.style.position = 'absolute';
+                        obj.style.left = '-9999px';
+                        obj.onload = () => {
+                            try {
+                                const doc = obj.contentDocument;
+                                if (!doc) {
+                                    reject(new Error('No contentDocument accessible (CORS blocking local file?)'));
+                                    return;
+                                }
+                                const svg = doc.documentElement;
+                                if (!svg || svg.tagName.toLowerCase() !== 'svg') {
+                                    reject(new Error('Loaded content is not an SVG'));
+                                    return;
+                                }
+                                resolve(svg.outerHTML);
+                            } catch (err) {
+                                reject(err);
+                            } finally {
+                                if (obj.parentNode) document.body.removeChild(obj);
+                            }
+                        };
+                        obj.onerror = () => {
+                            if (obj.parentNode) document.body.removeChild(obj);
+                            reject(new Error(`Failed to load ${this.filePath} via <object>`));
+                        };
+                        document.body.appendChild(obj);
+                    });
+                } catch (fallbackError) {
+                    console.error('All loading methods failed.');
+                    throw new Error(`Could not load SVG via fetch or object tag. If using file://, browsers block this. Error: ${fallbackError.message}`);
+                }
             }
         }
 

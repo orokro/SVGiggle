@@ -7,11 +7,10 @@
     <style>
         body { font-family: system-ui, sans-serif; padding: 20px; }
         h1 { margin-bottom: 20px; }
-        table { border-collapse: collapse; width: 100%; max-width: 800px; margin: 0 auto; }
+        table { border-collapse: collapse; width: 100%; max-width: 900px; margin: 0 auto; }
         th, td { border: 1px solid #ccc; padding: 10px; text-align: center; vertical-align: middle; }
         th { background: #f0f0f0; }
-        .svg-container { display: flex; justify-content: center; align-items: center; }
-        svg, img { border: 2px solid black; width: 100px; height: 100px; display: block; }
+        svg { border: 2px solid black; width: 100px; height: 100px; display: block; margin: 0 auto; }
         .code-snippet { 
             font-family: monospace; 
             font-size: 11px; 
@@ -22,21 +21,24 @@
             background: #f9f9f9; 
             padding: 5px; 
             border: 1px solid #eee; 
+            white-space: pre-wrap;
         }
+        /* Hidden templates */
+        .svg-template { display: none; }
     </style>
     <!-- Load the library -->
     <script src="../dist/svgiggle.iife.js"></script>
 </head>
 <body>
     <h1>SVGiggle Demo: Global Normalization</h1>
-    <p>Visual inspection of normalization. Left: Original (img/object). Right: Normalized (SVGiggle).</p>
+    <p>Visual inspection of normalization. No server required (SVGs loaded from DOM).</p>
     
     <table id="demo-table">
         <thead>
             <tr>
                 <th>File Name</th>
-                <th>Before (Original)</th>
-                <th>After (Normalized)</th>
+                <th>Before (Original DOM)</th>
+                <th>After (Normalized DOM)</th>
                 <th>Path Data (Snippet)</th>
             </tr>
         </thead>
@@ -45,66 +47,95 @@
         </tbody>
     </table>
 
+    <!-- Inline SVG Templates -->
+    <div id="templates">
+        <!-- heart_global.svg -->
+        <template id="tpl-heart_global">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+                <path d="M 10 30 A 20 20 0 0 1 50 30 A 20 20 0 0 1 90 30 Q 90 60 50 90 Q 10 60 10 30 Z" fill="red" stroke="black" stroke-width="3" />
+                <path d="M 20 30 A 5 5 0 0 1 30 20 A 5 5 0 0 1 40 30" fill="white" stroke="none" />
+            </svg>
+        </template>
+
+        <!-- heart_local.svg -->
+        <template id="tpl-heart_local">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+                <g transform="translate(10, 10)">
+                    <path d="m 0 20 a 20 20 0 0 1 40 0 a 20 20 0 0 1 40 0 q 0 30 -40 60 q -40 -30 -40 -60 z" fill="red" stroke="black" stroke-width="3" />
+                    <path d="m 10 20 a 5 5 0 0 1 10 -10 a 5 5 0 0 1 10 10" fill="white" stroke="none" />
+                </g>
+            </svg>
+        </template>
+
+        <!-- heart_mixed.svg -->
+        <template id="tpl-heart_mixed">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+                <g transform="translate(5, 5)">
+                    <path d="M 5 25 A 20 20 0 0 1 45 25 A 20 20 0 0 1 85 25 Q 85 55 45 85 Q 5 55 5 25 Z" fill="red" stroke="black" stroke-width="3" />
+                </g>
+                <g transform="scale(2)">
+                    <path d="m 10 15 a 2.5 2.5 0 0 1 5 -5 a 2.5 2.5 0 0 1 5 5" fill="white" stroke="none" />
+                </g>
+            </svg>
+        </template>
+    </div>
+
     <script>
-        const files = ['heart_global.svg', 'heart_local.svg', 'heart_mixed.svg'];
+        const fileMap = {
+            'heart_global.svg': 'tpl-heart_global',
+            'heart_local.svg':  'tpl-heart_local',
+            'heart_mixed.svg':  'tpl-heart_mixed'
+        };
+
         const tbody = document.querySelector('#demo-table tbody');
-
-        // Check if SVGiggle is loaded
-        if (typeof SVGiggle === 'undefined') {
-            document.body.innerHTML += '<p style="color:red">Error: SVGiggle library not loaded!</p>';
-        }
-
-        // SVGiggle export seems to be named. Let's inspect.
-        // If export is `class SVGiggle`, the IIFE usually exposes it under `SVGiggle.SVGiggle` if name is SVGiggle.
-        // Or if it was default export...
-        // Let's assume `SVGiggle.SVGiggle`. If not, try `SVGiggle` (if default export or just class).
         const Lib = SVGiggle.SVGiggle || SVGiggle;
 
         async function run() {
-            for (const file of files) {
+            for (const [fileName, tplId] of Object.entries(fileMap)) {
                 const tr = document.createElement('tr');
                 
                 // Name
                 const tdName = document.createElement('td');
-                tdName.textContent = file;
+                tdName.textContent = fileName;
                 tr.appendChild(tdName);
 
-                // Before
+                // Get Template Content
+                const tpl = document.getElementById(tplId);
+                const originalSvg = tpl.content.querySelector('svg').cloneNode(true);
+                
+                // Before Column
                 const tdBefore = document.createElement('td');
-                const img = document.createElement('img');
-                img.src = `../svgs/${file}`;
-                img.alt = 'Original';
-                tdBefore.appendChild(img);
+                // We append a clone to show the "Before" state
+                const beforeClone = originalSvg.cloneNode(true);
+                tdBefore.appendChild(beforeClone);
                 tr.appendChild(tdBefore);
 
-                // After
+                // After Column
                 const tdAfter = document.createElement('td');
                 const tdCode = document.createElement('td');
                 tdCode.className = 'code-snippet';
                 
                 try {
-                    const s = new Lib(`../svgs/${file}`);
+                    // Instantiate SVGiggle with the DOM Element (originalSvg)
+                    // The library should clone it internally or we pass a clone.
+                    // The prompt says "without changing the same or rendering of the element" referring to s.svg getter vs original?
+                    // Actually, "The s.svg that returns should only use global coordinates, without changing the same or rendering of the element."
+                    // This implies the visual output should remain the same.
+                    
+                    const s = new Lib(originalSvg); 
                     await s.ready;
-                    const svg = s.svg;
+                    const normalizedSvg = s.svg;
                     
-                    // Ensure size match for visual comparison
-                    // SVGiggle normalizes content, but outer SVG attributes (width/height) are preserved from file or default?
-                    // We set explicit size for display.
-                    svg.setAttribute('width', '100');
-                    svg.setAttribute('height', '100');
-                    // Add border via CSS class? Or style.
-                    // The CSS rule `svg { border: 2px solid black; }` handles it.
-                    
-                    tdAfter.appendChild(svg);
+                    // Add normalized SVG to the "After" column
+                    tdAfter.appendChild(normalizedSvg);
                     
                     // Show path data snippet
-                    const paths = svg.querySelectorAll('path');
+                    const paths = normalizedSvg.querySelectorAll('path');
                     let code = '';
                     paths.forEach((p, i) => {
                         let d = p.getAttribute('d');
-                        if (d.length > 30) d = d.substring(0, 30) + '...';
-                        code += `Path ${i+1}: ${d}
-`;
+                        if (d.length > 50) d = d.substring(0, 50) + '...';
+                        code += `Path ${i+1}: ${d}\n`;
                     });
                     tdCode.textContent = code;
 
