@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVGiggle - Normalize Global Coordinates Demo</title>
+    <style>
+        body { font-family: system-ui, sans-serif; padding: 20px; }
+        h1 { margin-bottom: 20px; }
+        table { border-collapse: collapse; width: 100%; max-width: 800px; margin: 0 auto; }
+        th, td { border: 1px solid #ccc; padding: 10px; text-align: center; vertical-align: middle; }
+        th { background: #f0f0f0; }
+        .svg-container { display: flex; justify-content: center; align-items: center; }
+        svg, img { border: 2px solid black; width: 100px; height: 100px; display: block; }
+        .code-snippet { 
+            font-family: monospace; 
+            font-size: 11px; 
+            text-align: left; 
+            max-width: 250px; 
+            max-height: 100px; 
+            overflow: auto; 
+            background: #f9f9f9; 
+            padding: 5px; 
+            border: 1px solid #eee; 
+        }
+    </style>
+    <!-- Load the library -->
+    <script src="../dist/svgiggle.iife.js"></script>
+</head>
+<body>
+    <h1>SVGiggle Demo: Global Normalization</h1>
+    <p>Visual inspection of normalization. Left: Original (img/object). Right: Normalized (SVGiggle).</p>
+    
+    <table id="demo-table">
+        <thead>
+            <tr>
+                <th>File Name</th>
+                <th>Before (Original)</th>
+                <th>After (Normalized)</th>
+                <th>Path Data (Snippet)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Rows injected by script -->
+        </tbody>
+    </table>
+
+    <script>
+        const files = ['heart_global.svg', 'heart_local.svg', 'heart_mixed.svg'];
+        const tbody = document.querySelector('#demo-table tbody');
+
+        // Check if SVGiggle is loaded
+        if (typeof SVGiggle === 'undefined') {
+            document.body.innerHTML += '<p style="color:red">Error: SVGiggle library not loaded!</p>';
+        }
+
+        // SVGiggle export seems to be named. Let's inspect.
+        // If export is `class SVGiggle`, the IIFE usually exposes it under `SVGiggle.SVGiggle` if name is SVGiggle.
+        // Or if it was default export...
+        // Let's assume `SVGiggle.SVGiggle`. If not, try `SVGiggle` (if default export or just class).
+        const Lib = SVGiggle.SVGiggle || SVGiggle;
+
+        async function run() {
+            for (const file of files) {
+                const tr = document.createElement('tr');
+                
+                // Name
+                const tdName = document.createElement('td');
+                tdName.textContent = file;
+                tr.appendChild(tdName);
+
+                // Before
+                const tdBefore = document.createElement('td');
+                const img = document.createElement('img');
+                img.src = `../svgs/${file}`;
+                img.alt = 'Original';
+                tdBefore.appendChild(img);
+                tr.appendChild(tdBefore);
+
+                // After
+                const tdAfter = document.createElement('td');
+                const tdCode = document.createElement('td');
+                tdCode.className = 'code-snippet';
+                
+                try {
+                    const s = new Lib(`../svgs/${file}`);
+                    await s.ready;
+                    const svg = s.svg;
+                    
+                    // Ensure size match for visual comparison
+                    // SVGiggle normalizes content, but outer SVG attributes (width/height) are preserved from file or default?
+                    // We set explicit size for display.
+                    svg.setAttribute('width', '100');
+                    svg.setAttribute('height', '100');
+                    // Add border via CSS class? Or style.
+                    // The CSS rule `svg { border: 2px solid black; }` handles it.
+                    
+                    tdAfter.appendChild(svg);
+                    
+                    // Show path data snippet
+                    const paths = svg.querySelectorAll('path');
+                    let code = '';
+                    paths.forEach((p, i) => {
+                        let d = p.getAttribute('d');
+                        if (d.length > 30) d = d.substring(0, 30) + '...';
+                        code += `Path ${i+1}: ${d}
+`;
+                    });
+                    tdCode.textContent = code;
+
+                } catch (e) {
+                    console.error(e);
+                    tdAfter.textContent = 'Error: ' + e.message;
+                }
+
+                tr.appendChild(tdAfter);
+                tr.appendChild(tdCode);
+                tbody.appendChild(tr);
+            }
+        }
+
+        run();
+    </script>
+</body>
+</html>

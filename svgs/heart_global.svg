@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Heart Shape -->
+  <path d="M 10 30 A 20 20 0 0 1 50 30 A 20 20 0 0 1 90 30 Q 90 60 50 90 Q 10 60 10 30 Z" fill="red" stroke="black" stroke-width="3" />
+  <!-- Highlight -->
+  <path d="M 20 30 A 5 5 0 0 1 30 20 A 5 5 0 0 1 40 30" fill="white" stroke="none" />
+</svg>

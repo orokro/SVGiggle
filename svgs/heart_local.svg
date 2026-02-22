@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <g transform="translate(10, 10)">
+    <!-- Heart Shape (Local/Relative) -->
+    <path d="m 0 20 a 20 20 0 0 1 40 0 a 20 20 0 0 1 40 0 q 0 30 -40 60 q -40 -30 -40 -60 z" fill="red" stroke="black" stroke-width="3" />
+    <!-- Highlight (Local/Relative) -->
+    <path d="m 10 20 a 5 5 0 0 1 10 -10 a 5 5 0 0 1 10 10" fill="white" stroke="none" />
+  </g>
+</svg>
