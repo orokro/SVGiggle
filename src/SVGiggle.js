@@ -133,7 +133,7 @@ export class SVGiggle {
             throw new Error('DOMMatrix is not supported in this environment.');
         }
 
-        const allowedTags = ['g', 'svg', 'defs', 'symbol', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon'];
+        const allowedTags = ['g', 'svg', 'defs', 'symbol', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'clippath', 'use'];
 
         const traverse = (element, parentMatrix) => {
             const tagName = element.tagName.toLowerCase();
@@ -141,6 +141,13 @@ export class SVGiggle {
                 this.unsupportedElements.push(tagName);
                 if (element.parentNode) element.parentNode.removeChild(element);
                 return;
+            }
+
+            // Normalize ID
+            const id = element.getAttribute('id');
+            if (id) {
+                const clean = this.cleanId(id);
+                element.setAttribute('data-normalized-id', clean);
             }
 
             let currentMatrix = parentMatrix;
@@ -200,9 +207,9 @@ export class SVGiggle {
             }
 
             // 2. Handle element types
-            if (tagName === 'g' || tagName === 'svg' || tagName === 'defs' || tagName === 'symbol') {
+            if (tagName === 'g' || tagName === 'svg' || tagName === 'defs' || tagName === 'symbol' || tagName === 'clipPath' || tagName === 'use') {
                 // For containers, just recurse
-                if (tagName === 'svg' && element !== this._svg) {
+                if ((tagName === 'svg' || tagName === 'use') && element !== this._svg) {
                     const x = parseFloat(element.getAttribute('x') || 0);
                     const y = parseFloat(element.getAttribute('y') || 0);
                     if (x !== 0 || y !== 0) {
@@ -387,5 +394,66 @@ export class SVGiggle {
             return d;
         }
         return null;
+    }
+
+    cleanId(id) {
+        if (!id) return null;
+        let clean = id;
+        // Decode Illustrator hex encoding: _x002D_ -> -
+        clean = clean.replace(/_x([0-9A-Fa-f]{4})_/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)));
+        
+        // Remove _copy_X or _copy suffix (case insensitive)
+        clean = clean.replace(/_copy(_\d+)?$/i, '');
+        
+        // Remove Illustrator duplication suffix _1_ (or similar numbers) at end
+        clean = clean.replace(/_\d+_$/, '');
+        
+        // Kebab case (lowercase)
+        clean = clean.toLowerCase();
+        
+        return clean;
+    }
+
+    tree(clean = false, showOriginal = false) {
+        if (!this._svg) return '';
+        
+        const buildTree = (el, depth = 0) => {
+            const indent = '  '.repeat(depth);
+            const tagName = el.tagName;
+            const id = el.getAttribute('id');
+            const cleanId = el.getAttribute('data-normalized-id');
+            
+            let name = '';
+            if (clean && cleanId) {
+                name = cleanId;
+                if (showOriginal && id) { // Show original regardless of difference? Prompt: "old name in parens"
+                     // Prompt example: "- Pupil (Pupil_1_ Copy 2)"
+                     // If they are same, maybe redundant? "pupil (pupil)"?
+                     // I'll show it if different, or always if requested?
+                     // Prompt implies showing the *transformation*.
+                     // I'll stick to showing it if different or just always if user requested debugging.
+                     // But usually "Pupil (Pupil)" is noise.
+                     // I'll show only if different OR if showOriginal is explicitly true maybe?
+                     // Let's check diff.
+                     // Wait, cleanId is "pupil", id is "Pupil". They differ.
+                     // cleanId is "pupil", id is "pupil". No diff.
+                     if (id !== cleanId) name += ` (${id})`;
+                }
+            } else if (id) {
+                name = id;
+            }
+
+            let line = `${indent}- ${tagName}`;
+            if (name) line += ` ${name}`;
+            
+            let output = line + '\n';
+            
+            for (const child of el.children) {
+                output += buildTree(child, depth + 1);
+            }
+            return output;
+        };
+        
+        return buildTree(this._svg);
     }
 }

@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "test": "vitest run --environment jsdom",
-    "demo": "vite --open demo_pages/normalize_global_coords.html",
+    "demo": "vite --open demos/normalize_global_coords.html",
     "build": "vite build"
   },
   "keywords": [],
