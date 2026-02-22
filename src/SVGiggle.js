@@ -14,6 +14,7 @@ export class SVGiggle {
         }
         
         this._svg = null;
+        this.unsupportedElements = [];
         this.ready = this.init();
     }
 
@@ -132,15 +133,21 @@ export class SVGiggle {
             throw new Error('DOMMatrix is not supported in this environment.');
         }
 
+        const allowedTags = ['g', 'svg', 'defs', 'symbol', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon'];
+
         const traverse = (element, parentMatrix) => {
+            const tagName = element.tagName.toLowerCase();
+            if (!allowedTags.includes(tagName)) {
+                this.unsupportedElements.push(tagName);
+                if (element.parentNode) element.parentNode.removeChild(element);
+                return;
+            }
+
             let currentMatrix = parentMatrix;
 
             // 1. Get element transform
             const transformAttr = element.getAttribute('transform');
             if (transformAttr) {
-                // Parse transform attribute into matrix
-                // Note: DOMMatrix constructor with string might fail in some envs if not fully supported.
-                // We'll try/catch or assume it works for standard transforms.
                 // Parse transform attribute into matrix manually to support environments without CSS parsing
                 const commands = transformAttr.matchAll(/(\w+)\s*\(([^)]*)\)/g);
                 for (const match of commands) {
@@ -193,14 +200,8 @@ export class SVGiggle {
             }
 
             // 2. Handle element types
-            const tagName = element.tagName.toLowerCase();
-
             if (tagName === 'g' || tagName === 'svg' || tagName === 'defs' || tagName === 'symbol') {
                 // For containers, just recurse
-                // Note: <svg> (nested) might have x, y, viewBox. 
-                // Normalizing nested SVGs is complex (viewport changes). 
-                // We'll assume simple groups for now or apply x/y if present?
-                // Nested <svg> x/y acts like a translation.
                 if (tagName === 'svg' && element !== this._svg) {
                     const x = parseFloat(element.getAttribute('x') || 0);
                     const y = parseFloat(element.getAttribute('y') || 0);
@@ -224,10 +225,13 @@ export class SVGiggle {
                     const matrixArray = [m.a, m.b, m.c, m.d, m.e, m.f];
 
                     // Convert to absolute and transform using svgpath
-                    const newD = svgpath(d)
+                    let newD = svgpath(d)
                         .abs()
                         .matrix(matrixArray)
                         .toString();
+                    
+                    // Convert to Cubic Bezier
+                    newD = this.toCubic(newD);
                     
                     element.setAttribute('d', newD);
                 }
@@ -238,10 +242,13 @@ export class SVGiggle {
                     const m = currentMatrix;
                     const matrixArray = [m.a, m.b, m.c, m.d, m.e, m.f];
                     
-                    const newD = svgpath(pathData)
+                    let newD = svgpath(pathData)
                         .abs()
                         .matrix(matrixArray)
                         .toString();
+                    
+                    // Convert to Cubic Bezier
+                    newD = this.toCubic(newD);
                     
                     // Replace element with <path>
                     const newPath = this._svg.ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -261,6 +268,81 @@ export class SVGiggle {
 
         // Start traversal with identity matrix
         traverse(svg, new Matrix());
+        
+        if (this.unsupportedElements.length > 0) {
+            console.warn('Dropped unsupported SVG elements:', [...new Set(this.unsupportedElements)]);
+        }
+    }
+
+    toCubic(d) {
+        let newPath = '';
+        let startX = 0, startY = 0;
+        let x = 0, y = 0;
+
+        svgpath(d)
+            .abs()
+            .unshort()
+            .unarc()
+            .iterate((segment, index, curX, curY) => {
+                const cmd = segment[0];
+                const args = segment.slice(1);
+                x = curX; y = curY; 
+                
+                if (cmd === 'M') {
+                    startX = args[0];
+                    startY = args[1];
+                    newPath += `M ${args[0]} ${args[1]} `;
+                    return;
+                }
+
+                if (cmd === 'L') {
+                    // L x1 y1 -> C x y x1 y1 x1 y1
+                    const x1 = args[0], y1 = args[1];
+                    newPath += `C ${x} ${y} ${x1} ${y1} ${x1} ${y1} `;
+                    return;
+                }
+                
+                if (cmd === 'H') {
+                    // H x1 -> L x1 y -> C ...
+                    const x1 = args[0];
+                    newPath += `C ${x} ${y} ${x1} ${y} ${x1} ${y} `;
+                    return;
+                }
+                
+                if (cmd === 'V') {
+                    // V y1 -> L x y1 -> C ...
+                    const y1 = args[0];
+                    newPath += `C ${x} ${y} ${x} ${y1} ${x} ${y1} `;
+                    return;
+                }
+                
+                if (cmd === 'C') {
+                    newPath += `C ${args.join(' ')} `;
+                    return;
+                }
+                
+                if (cmd === 'Q') {
+                    // Q x1 y1 x2 y2 -> C
+                    const qx = args[0], qy = args[1];
+                    const endX = args[2], endY = args[3];
+                    
+                    const cp1x = x + (2/3) * (qx - x);
+                    const cp1y = y + (2/3) * (qy - y);
+                    const cp2x = endX + (2/3) * (qx - endX);
+                    const cp2y = endY + (2/3) * (qy - endY);
+                    
+                    newPath += `C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${endX} ${endY} `;
+                    return;
+                }
+                
+                if (cmd === 'Z') {
+                    // Close with curve to start, then Z
+                    newPath += `C ${x} ${y} ${startX} ${startY} ${startX} ${startY} Z `;
+                    return;
+                }
+            });
+        
+        return newPath.trim();
     }
 
     shapeToPath(element) {

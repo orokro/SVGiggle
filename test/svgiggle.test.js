@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { SVGiggle } from '../src/SVGiggle.js';
 import fs from 'fs';
 import path from 'path';
-import { DOMMatrix } from 'geometry-interfaces';
+import DOMMatrix from 'dommatrix';
 
 // Polyfill DOMMatrix for testing environment (jsdom often lacks full support)
 if (typeof global.DOMMatrix === 'undefined') {
